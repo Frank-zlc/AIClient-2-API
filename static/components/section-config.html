@@ -453,6 +453,39 @@
                 </div>
             </div>
 
+            <!-- Kiro 身份注入 (claude-kiro-oauth 专用) -->
+            <div class="config-group-section" id="kiroIdentitySection">
+                <h3 data-i18n="config.kiroIdentity.title">
+                    <i class="fas fa-id-badge"></i> Kiro 身份注入
+                    <span style="font-size:12px;font-weight:normal;color:#888;margin-left:8px;padding:2px 8px;border:1px solid #ddd;border-radius:10px;" data-i18n="config.kiroIdentity.providerTag">claude-kiro-oauth 专用</span>
+                </h3>
+                <small class="form-text text-muted" data-i18n="config.kiroIdentity.intro">默认关闭，请求会原样转发到 Kiro 上游，不做任何身份覆盖。开启后会在 system 提示词前注入一段自定义文案，用于"伪装"成其他客户端身份（如 Cline / Kilo Code / Claude Code），适合多场景接入。</small>
+                <div class="form-group">
+                    <label data-i18n="config.kiroIdentity.enabled">启用身份注入前缀</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="kiroIdentityInjectionEnabled">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <small class="form-text" data-i18n="config.kiroIdentity.enabledNote">关闭 = 直接透传 Kiro 原始响应（推荐）；开启 = 注入下方前缀进行身份伪装。</small>
+                </div>
+                <div class="form-group">
+                    <label for="kiroIdentityFallbackName" data-i18n="config.kiroIdentity.fallbackName">兜底身份名</label>
+                    <input type="text" id="kiroIdentityFallbackName" class="form-control" maxlength="256">
+                    <small class="form-text" data-i18n="config.kiroIdentity.fallbackNameNote">当用户的 system prompt 里没有指定身份时，模型会用这个名字回答自己是谁。留空 = 使用代码内置默认。</small>
+                </div>
+                <div class="form-group">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                        <label for="kiroIdentityPrompt" style="margin:0;" data-i18n="config.kiroIdentity.prompt">前缀模板</label>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="kiroIdentityPromptReset">
+                            <i class="fas fa-undo"></i>
+                            <span data-i18n="config.kiroIdentity.resetToDefault">恢复默认模板</span>
+                        </button>
+                    </div>
+                    <textarea id="kiroIdentityPrompt" class="form-control" rows="10" maxlength="8192"></textarea>
+                    <small class="form-text" data-i18n="config.kiroIdentity.promptNote">支持占位符 <code>{{fallbackName}}</code> 和 <code>{{identity}}</code>。留空 = 使用代码内置默认模板。</small>
+                </div>
+            </div>
+
             <div class="form-actions">
                 <button class="btn btn-success" id="saveConfig">
                     <i class="fas fa-save"></i> <span data-i18n="config.save">保存配置</span>

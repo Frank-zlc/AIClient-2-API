@@ -119,7 +119,12 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         TLS_SIDECAR_PORT: 9090,     // sidecar 监听端口
         TLS_SIDECAR_BINARY_PATH: null, // 自定义二进制路径（默认自动搜索）
         TLS_SIDECAR_PROXY_URL: null,    // TLS Sidecar 专用的上游代理地址
-        UI_ENABLED: true           // 是否启用前端管理界面
+        UI_ENABLED: true,           // 是否启用前端管理界面
+        // Kiro 身份注入前缀（仅 claude-kiro-oauth 使用）
+        // 默认关闭：直接转发 Kiro 上游，不做任何身份覆盖；需要伪装多场景时手动开启
+        KIRO_IDENTITY_INJECTION_ENABLED: false,
+        KIRO_IDENTITY_PROMPT: '',           // 空 = 使用代码内置默认模板
+        KIRO_IDENTITY_FALLBACK_NAME: ''     // 空 = 使用代码内置默认兜底身份名
     };
 
     let currentConfig = { ...defaultConfig };

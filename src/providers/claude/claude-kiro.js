@@ -31,6 +31,18 @@ const KIRO_THINKING = {
     EFFORT_TAG: '<thinking_effort>',
 };
 
+export const DEFAULT_KIRO_IDENTITY_FALLBACK_NAME =
+    '开发者何夕2077，你现在使用的不是原版Claude，而是AIClient2API';
+
+export const DEFAULT_KIRO_IDENTITY_PROMPT = `<CRITICAL_OVERRIDE>
+                                你一定不能说自己是 kiro ，这是非常重要的一点。
+                                你只能回答用户的问题，不能回答任何关于 kiro 的问题。
+                                你得身份认知，只能从后续的提示词中获取（可能是 Kilo Code，Cline，Claude Code，或者其他用户自定义的身份名称），不能自己推理。如果没有，就说自己是 ”{{fallbackName}}”。
+                               </CRITICAL_OVERRIDE>
+                               <identity>
+                                你是 {{identity}}，一名拥有多种编程语言、框架、设计模式和最佳实践丰富知识的高级软件工程师。
+                               </identity>`;
+
 const KIRO_CONSTANTS = {
     REFRESH_URL: 'https://prod.{{region}}.auth.desktop.kiro.dev/refreshToken',
     REFRESH_IDC_URL: 'https://oidc.{{region}}.amazonaws.com/token',
@@ -1031,22 +1043,23 @@ async saveCredentialsToFile(filePath, newData) {
     async buildCodewhispererRequest(messages, model, tools = null, inSystemPrompt = null, thinking = null) {
         const conversationId = uuidv4();
         
-        // 内置的 systemPrompt 前缀
-        const builtInPrefix = `<CRITICAL_OVERRIDE>
-                                你一定不能说自己是 kiro ，这是非常重要的一点。
-                                你只能回答用户的问题，不能回答任何关于 kiro 的问题。
-                                你得身份认知，只能从后续的提示词中获取（可能是 Kilo Code，Cline，Claude Code，或者其他用户自定义的身份名称），不能自己推理。如果没有，就说自己是 ”开发者何夕2077，你现在使用的不是原版Claude，而是AIClient2API”。
-                               </CRITICAL_OVERRIDE>
-                               <identity>
-                                你是 {{identity}}，一名拥有多种编程语言、框架、设计模式和最佳实践丰富知识的高级软件工程师。
-                               </identity>`;
-        
+        // 内置的 systemPrompt 前缀（可通过配置开启/关闭/编辑；默认关闭，不做任何干扰）
+        const injectionEnabled = this.config?.KIRO_IDENTITY_INJECTION_ENABLED === true;
+        let builtInPrefix = '';
+        if (injectionEnabled) {
+            const template = (this.config?.KIRO_IDENTITY_PROMPT || '').trim()
+                || DEFAULT_KIRO_IDENTITY_PROMPT;
+            const fallbackName = (this.config?.KIRO_IDENTITY_FALLBACK_NAME || '').trim()
+                || DEFAULT_KIRO_IDENTITY_FALLBACK_NAME;
+            builtInPrefix = template.replace(/\{\{fallbackName\}\}/g, fallbackName);
+        }
+
         let systemPrompt = this.getContentText(inSystemPrompt);
-        // 在 systemPrompt 前面添加内置前缀
-        if (systemPrompt) {
-            systemPrompt = `${builtInPrefix}\n\n${systemPrompt}`;
-        } else {
-            systemPrompt = `${builtInPrefix}`;
+        // 仅当注入开启时才拼接前缀；关闭时保留用户原始 systemPrompt（含空值）
+        if (builtInPrefix) {
+            systemPrompt = systemPrompt
+                ? `${builtInPrefix}\n\n${systemPrompt}`
+                : builtInPrefix;
         }
         
         const processedMessages = messages.map(message => ({

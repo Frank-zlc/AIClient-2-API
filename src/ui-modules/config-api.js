@@ -11,6 +11,7 @@ import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import { HEALTH_CHECK, PASSWORD, NETWORK, RETRY } from '../utils/constants.js';
 import { withFileLock, atomicWriteFile } from '../utils/file-lock.js';
 import { validateCredentials } from './auth.js';
+import { DEFAULT_KIRO_IDENTITY_PROMPT, DEFAULT_KIRO_IDENTITY_FALLBACK_NAME } from '../providers/claude/claude-kiro.js';
 
 function parseBooleanConfig(value) {
     if (typeof value === 'boolean') return value;
@@ -113,6 +114,13 @@ export async function handleGetConfig(req, res, currentConfig) {
         LOG_MAX_FILE_SIZE: currentConfig.LOG_MAX_FILE_SIZE,
         LOG_MAX_FILES: currentConfig.LOG_MAX_FILES,
         SCHEDULED_HEALTH_CHECK: currentConfig.SCHEDULED_HEALTH_CHECK,
+        // Kiro 身份注入（默认关闭；仅 claude-kiro-oauth 使用）
+        KIRO_IDENTITY_INJECTION_ENABLED: currentConfig.KIRO_IDENTITY_INJECTION_ENABLED === true,
+        KIRO_IDENTITY_PROMPT: currentConfig.KIRO_IDENTITY_PROMPT || '',
+        KIRO_IDENTITY_FALLBACK_NAME: currentConfig.KIRO_IDENTITY_FALLBACK_NAME || '',
+        // 默认值随响应一起下发，前端用作 placeholder / 恢复默认按钮的数据源
+        KIRO_IDENTITY_DEFAULT_PROMPT: DEFAULT_KIRO_IDENTITY_PROMPT,
+        KIRO_IDENTITY_DEFAULT_FALLBACK_NAME: DEFAULT_KIRO_IDENTITY_FALLBACK_NAME,
         // 脱敏：只返回是否设置了 API Key，不返回原文
         REQUIRED_API_KEY: currentConfig.REQUIRED_API_KEY ? '******' : '',
         systemPrompt,
@@ -239,6 +247,27 @@ async function _handleUpdateConfig(req, res, currentConfig, body) {
         if (newConfig.TLS_SIDECAR_ENABLED_PROVIDERS !== undefined) currentConfig.TLS_SIDECAR_ENABLED_PROVIDERS = newConfig.TLS_SIDECAR_ENABLED_PROVIDERS;
         if (newConfig.TLS_SIDECAR_PORT !== undefined) currentConfig.TLS_SIDECAR_PORT = newConfig.TLS_SIDECAR_PORT;
         if (newConfig.TLS_SIDECAR_PROXY_URL !== undefined) currentConfig.TLS_SIDECAR_PROXY_URL = newConfig.TLS_SIDECAR_PROXY_URL;
+
+        // Kiro 身份注入配置
+        if (newConfig.KIRO_IDENTITY_INJECTION_ENABLED !== undefined) {
+            currentConfig.KIRO_IDENTITY_INJECTION_ENABLED = parseBooleanConfig(newConfig.KIRO_IDENTITY_INJECTION_ENABLED);
+        }
+        if (newConfig.KIRO_IDENTITY_PROMPT !== undefined) {
+            const v = String(newConfig.KIRO_IDENTITY_PROMPT ?? '');
+            if (v.length <= 8192) {
+                currentConfig.KIRO_IDENTITY_PROMPT = v;
+            } else {
+                logger.warn(`[UI API] KIRO_IDENTITY_PROMPT exceeds 8KB limit (got ${v.length}), rejected`);
+            }
+        }
+        if (newConfig.KIRO_IDENTITY_FALLBACK_NAME !== undefined) {
+            const v = String(newConfig.KIRO_IDENTITY_FALLBACK_NAME ?? '');
+            if (v.length <= 256) {
+                currentConfig.KIRO_IDENTITY_FALLBACK_NAME = v;
+            } else {
+                logger.warn(`[UI API] KIRO_IDENTITY_FALLBACK_NAME exceeds 256 chars (got ${v.length}), rejected`);
+            }
+        }
 
         // Log settings
         if (newConfig.LOG_ENABLED !== undefined) currentConfig.LOG_ENABLED = newConfig.LOG_ENABLED;
@@ -382,7 +411,10 @@ async function _handleUpdateConfig(req, res, currentConfig, body) {
                 TLS_SIDECAR_ENABLED_PROVIDERS: currentConfig.TLS_SIDECAR_ENABLED_PROVIDERS,
                 TLS_SIDECAR_PORT: currentConfig.TLS_SIDECAR_PORT,
                 TLS_SIDECAR_PROXY_URL: currentConfig.TLS_SIDECAR_PROXY_URL,
-                SCHEDULED_HEALTH_CHECK: currentConfig.SCHEDULED_HEALTH_CHECK
+                SCHEDULED_HEALTH_CHECK: currentConfig.SCHEDULED_HEALTH_CHECK,
+                KIRO_IDENTITY_INJECTION_ENABLED: currentConfig.KIRO_IDENTITY_INJECTION_ENABLED === true,
+                KIRO_IDENTITY_PROMPT: currentConfig.KIRO_IDENTITY_PROMPT || '',
+                KIRO_IDENTITY_FALLBACK_NAME: currentConfig.KIRO_IDENTITY_FALLBACK_NAME || ''
             };
 
             await atomicWriteFile(configPath, JSON.stringify(configToSave, null, 2), { encoding: 'utf-8', mode: 0o600 });

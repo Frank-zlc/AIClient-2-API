@@ -497,6 +497,44 @@ async function loadConfiguration() {
 
         if (systemPromptFilePathEl) systemPromptFilePathEl.value = data.SYSTEM_PROMPT_FILE_PATH || 'configs/input_system_prompt.txt';
         if (systemPromptModeEl) systemPromptModeEl.value = data.SYSTEM_PROMPT_MODE || 'append';
+
+        // Kiro 身份注入
+        const kiroToggleEl = document.getElementById('kiroIdentityInjectionEnabled');
+        const kiroFallbackEl = document.getElementById('kiroIdentityFallbackName');
+        const kiroPromptEl = document.getElementById('kiroIdentityPrompt');
+        const kiroResetBtn = document.getElementById('kiroIdentityPromptReset');
+        const kiroDefaults = {
+            prompt: data.KIRO_IDENTITY_DEFAULT_PROMPT || '',
+            fallbackName: data.KIRO_IDENTITY_DEFAULT_FALLBACK_NAME || ''
+        };
+        if (kiroToggleEl) kiroToggleEl.checked = data.KIRO_IDENTITY_INJECTION_ENABLED === true;
+        if (kiroFallbackEl) {
+            kiroFallbackEl.value = data.KIRO_IDENTITY_FALLBACK_NAME || '';
+            kiroFallbackEl.placeholder = kiroDefaults.fallbackName;
+        }
+        if (kiroPromptEl) {
+            kiroPromptEl.value = data.KIRO_IDENTITY_PROMPT || '';
+            kiroPromptEl.placeholder = kiroDefaults.prompt;
+        }
+        const syncKiroDisabled = () => {
+            const enabled = kiroToggleEl?.checked === true;
+            if (kiroPromptEl) kiroPromptEl.disabled = !enabled;
+            if (kiroFallbackEl) kiroFallbackEl.disabled = !enabled;
+            if (kiroResetBtn) kiroResetBtn.disabled = !enabled;
+        };
+        if (kiroToggleEl && !kiroToggleEl.dataset.kiroBound) {
+            kiroToggleEl.addEventListener('change', syncKiroDisabled);
+            kiroToggleEl.dataset.kiroBound = 'true';
+        }
+        if (kiroResetBtn && !kiroResetBtn.dataset.kiroBound) {
+            kiroResetBtn.addEventListener('click', () => {
+                if (kiroPromptEl) kiroPromptEl.value = kiroDefaults.prompt;
+                if (kiroFallbackEl) kiroFallbackEl.value = kiroDefaults.fallbackName;
+            });
+            kiroResetBtn.dataset.kiroBound = 'true';
+        }
+        syncKiroDisabled();
+
         if (promptLogBaseNameEl) promptLogBaseNameEl.value = data.PROMPT_LOG_BASE_NAME || 'prompt_log';
         if (promptLogModeEl) promptLogModeEl.value = data.PROMPT_LOG_MODE || 'none';
         if (requestMaxRetriesEl) requestMaxRetriesEl.value = data.REQUEST_MAX_RETRIES || 3;
@@ -693,6 +731,14 @@ async function saveConfiguration(options = {}) {
         }
     });
     config.SYSTEM_PROMPT_REPLACEMENTS = replacements;
+
+    // Kiro 身份注入
+    config.KIRO_IDENTITY_INJECTION_ENABLED =
+        document.getElementById('kiroIdentityInjectionEnabled')?.checked === true;
+    config.KIRO_IDENTITY_PROMPT =
+        document.getElementById('kiroIdentityPrompt')?.value ?? '';
+    config.KIRO_IDENTITY_FALLBACK_NAME =
+        document.getElementById('kiroIdentityFallbackName')?.value ?? '';
 
     config.PROMPT_LOG_BASE_NAME = document.getElementById('promptLogBaseName')?.value || '';
     config.PROMPT_LOG_MODE = document.getElementById('promptLogMode')?.value || '';
