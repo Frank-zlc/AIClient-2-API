@@ -1,0 +1,93 @@
+# AIClient-2-API 本地部署配置（支持局域网访问）
+# 使用方法：
+#   1. 加载镜像（首次）：docker load -i aiclient-2-api-zlc.tar
+#   2. 启动服务：       docker compose up -d
+#   3. 查看日志：       docker compose logs -f
+#   4. 停止服务：       docker compose down
+#
+# 访问入口：
+#   - 本机：       http://localhost:4000/
+#   - 局域网：     http://<本机内网IP>:4000/        例如 http://192.168.0.107:4000/
+#   - 健康检查：   http://<本机内网IP>:4000/health
+#
+# 局域网访问前置条件：
+#   - 端口已显式绑定 0.0.0.0（见下方 ports），允许所有网卡入站
+#   - Windows 防火墙需放行 TCP 4000、1455、8085-8087、19876-19880
+#     PowerShell（管理员）一次性放行：
+#       New-NetFirewallRule -DisplayName "aiclient2api" -Direction Inbound -Protocol TCP `
+#         -LocalPort 4000,1455,8085,8086,8087,19876,19877,19878,19879,19880 -Action Allow
+#   - 客户端使用本机内网 IP（ipconfig 查看），不要使用 127.0.0.1
+#
+# 安全提示：开放到局域网前请确认 configs/config.json 中的 REQUIRED_API_KEY 已设为强口令。
+
+services:
+  aiclient2api:
+    image: aiclient-2-api:local
+    container_name: aiclient2api
+    hostname: aiclient2api
+    restart: unless-stopped
+
+    # 端口映射（显式绑定 0.0.0.0，允许局域网访问）
+    # 3000  : 主 API + UI（外部映射 4000，避开本机已占用的 3000）
+    # 1455  : Codex OAuth 回调
+    # 8085-8087 : Gemini / iFlow OAuth 回调
+    # 19876-19880 : Kiro OAuth 回调端口范围
+    ports:
+      - "0.0.0.0:4000:3000"
+      - "0.0.0.0:1455:1455"
+      - "0.0.0.0:8085:8085"
+      - "0.0.0.0:8086:8086"
+      - "0.0.0.0:8087:8087"
+      - "0.0.0.0:19876:19876"
+      - "0.0.0.0:19877:19877"
+      - "0.0.0.0:19878:19878"
+      - "0.0.0.0:19879:19879"
+      - "0.0.0.0:19880:19880"
+
+    # 环境变量
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
+      - HOST=0.0.0.0          # 容器内服务监听所有网卡，必须保持 0.0.0.0
+      - SERVER_PORT=3000
+      # 通过 ARGS 向启动脚本追加 CLI 参数，例如：ARGS=--log-level debug
+      - ARGS=
+
+    # 数据卷挂载
+    volumes:
+      - ./configs:/app/configs
+      - ./logs:/app/logs
+      # 自定义插件目录（如不需要可注释掉）
+      # - ./plugins:/app/src/plugins-user
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    # 日志轮转，避免 docker json 日志无限增长
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+    # 资源限制（按需调整）
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+
+    networks:
+      - aiclient_net
+
+networks:
+  aiclient_net:
+    driver: bridge
+    name: aiclient_net
