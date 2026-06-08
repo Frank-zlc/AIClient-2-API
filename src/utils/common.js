@@ -389,7 +389,15 @@ function appendCustomModelsToModelList(clientModelList, customEntries, providerT
 export function getProtocolPrefix(provider) {
     // Special case for Codex - it needs its own protocol
     if (provider === 'openai-codex-oauth') {
-        return 'codex';
+        return MODEL_PROTOCOL_PREFIX.CODEX;
+    }
+    // Grok CLI OAuth talks to xAI Responses API directly.
+    if (provider === 'grok-cli-oauth' || provider.startsWith('grok-cli-oauth-')) {
+        return MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES;
+    }
+    // Special case for AtlasCloud - it uses openai protocol
+    if (provider === 'atlascloud' || provider.startsWith('atlascloud-')) {
+        return MODEL_PROTOCOL_PREFIX.OPENAI;
     }
 
     const hyphenIndex = provider.indexOf('-');
@@ -537,16 +545,62 @@ export function getClientIp(req, config = {}) {
 /**
  * Reads the entire request body from an HTTP request.
  * @param {http.IncomingMessage} req - The HTTP request object.
+ * @param {{ maxBytes?: number }} options - Optional body limits.
  * @returns {Promise<Object>} A promise that resolves with the parsed JSON request body.
  * @throws {Error} If the request body is not valid JSON.
  */
-export function getRequestBody(req) {
+export function getRequestBody(req, options = {}) {
     return new Promise((resolve, reject) => {
         let body = '';
+        let receivedBytes = 0;
+        let settled = false;
+        const DEFAULT_MAX_BYTES = 10 * 1024 * 1024; // Default 10MB limit
+        const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : DEFAULT_MAX_BYTES;
+
+        // 1. Quick check Content-Length header
+        const headers = req.headers || {};
+        const contentLength = parseInt(headers['content-length'] || '0', 10);
+        if (!isNaN(contentLength) && contentLength > maxBytes) {
+            req.resume(); // drain & discard
+            const error = new Error(`Request body too large. Maximum size is ${maxBytes} bytes.`);
+            error.statusCode = 413;
+            error.code = 'BODY_TOO_LARGE';
+            return reject(error);
+        }
+
+        const fail = (error) => {
+            if (settled) return;
+            settled = true;
+            if (typeof req.destroy === 'function') {
+                req.destroy();
+            }
+            reject(error);
+        };
+
+        const rejectTooLarge = (error) => {
+            if (settled) return;
+            settled = true;
+            if (typeof req.resume === 'function') {
+                req.resume();
+            }
+            reject(error);
+        };
+
         req.on('data', chunk => {
+            if (settled) return;
+            receivedBytes += chunk.length;
+            if (maxBytes && receivedBytes > maxBytes) {
+                const error = new Error(`Request body too large. Maximum size is ${maxBytes} bytes.`);
+                error.statusCode = 413;
+                error.code = 'BODY_TOO_LARGE';
+                rejectTooLarge(error);
+                return;
+            }
             body += chunk.toString();
         });
         req.on('end', () => {
+            if (settled) return;
+            settled = true;
             if (!body) {
                 return resolve({});
             }
@@ -557,7 +611,7 @@ export function getRequestBody(req) {
             }
         });
         req.on('error', err => {
-            reject(err);
+            fail(err);
         });
     });
 }
@@ -698,6 +752,12 @@ export async function handleStreamRequest(res, service, model, requestBody, from
         const needsConversion = getProtocolPrefix(fromProvider) !== getProtocolPrefix(toProvider);
         requestBody.model = model;
         const nativeStream = await service.generateContentStream(model, requestBody);
+        
+        // 如果提供者内部发生了模型回退（如 Antigravity 自动降级），同步更新本地 model 变量
+        // 这确保了后续的监控钩子和统计插件记录的是实际使用的模型
+        if (requestBody.model && requestBody.model !== model) {
+            model = requestBody.model;
+        }
         const addEvent = getProtocolPrefix(fromProvider) === MODEL_PROTOCOL_PREFIX.CLAUDE || getProtocolPrefix(fromProvider) === MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES;
         // 为每个请求生成唯一 ID，用于在单例 converter 中隔离并发流状态
         const streamRequestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -1030,6 +1090,13 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         requestBody.model = model;
         // fs.writeFile('oldRequest'+Date.now()+'.json', JSON.stringify(requestBody));
         const nativeResponse = await service.generateContent(model, requestBody);
+        
+        // 如果提供者内部发生了模型回退（如 Antigravity 自动降级），同步更新本地 model 变量
+        // 这确保了后续的监控钩子和统计插件记录的是实际使用的模型
+        if (requestBody.model && requestBody.model !== model) {
+            model = requestBody.model;
+        }
+        
         const responseText = extractResponseText(nativeResponse, toProvider);
 
         // Convert the response back to the client's format (fromProvider), if necessary.
@@ -1473,6 +1540,11 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
         await handleUnaryRequest(res, service, model, processedRequestBody, fromProvider, toProvider, CONFIG.PROMPT_LOG_MODE, PROMPT_LOG_FILENAME, providerPoolManager, actualUuid, actualCustomName, retryContext);
     }
 
+    // 同步更新模型名称（如果处理器内部或提供者发生了回退）
+    if (processedRequestBody.model && processedRequestBody.model !== model) {
+        model = processedRequestBody.model;
+    }
+
     // 执行插件钩子：内容生成后
     try {
         const pluginManager = getPluginManager();
@@ -1879,6 +1951,33 @@ export function extractSystemPromptFromRequestBody(requestBody, provider) {
                 }
             }
             break;
+        case MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES: {
+            if (typeof requestBody.instructions === 'string') {
+                incomingSystemText = requestBody.instructions;
+            } else if (requestBody.instructions) {
+                incomingSystemText = JSON.stringify(requestBody.instructions);
+            } else if (Array.isArray(requestBody.input)) {
+                const responsesSystemItem = requestBody.input.find(item =>
+                    item?.role === 'system' ||
+                    item?.role === 'developer' ||
+                    item?.type === 'system' ||
+                    item?.type === 'developer' ||
+                    (item?.type === 'message' && (item?.role === 'system' || item?.role === 'developer'))
+                );
+
+                const content = responsesSystemItem?.content;
+                if (typeof content === 'string') {
+                    incomingSystemText = content;
+                } else if (Array.isArray(content)) {
+                    incomingSystemText = content
+                        .map(part => typeof part === 'string' ? part : (part?.text || part?.content || JSON.stringify(part)))
+                        .join('\n');
+                } else if (content) {
+                    incomingSystemText = JSON.stringify(content);
+                }
+            }
+            break;
+        }
         default:
             logger.warn(`[System Prompt] Unknown provider: ${provider}`);
             break;
